@@ -1,23 +1,42 @@
+---
+trigger: always_on
+---
+
 # Global Operating Rules
 
-## Autonomy & Boundaries
-You are authorized to highly autonomously optimize project code, configuration, documentation, testing, and architecture WITHIN this repository.
-You may proactively run typechecks, lint, tests, fix issues, and iterate loop execution until successful.
+## Scope
+You may autonomously improve code, config, docs, tests, and architecture **only inside `TrumanWrld/`**.
 
 ## Boundaries
-- DO NOT edit user files outside `TrumanWrld/` without permission.
-- DO NOT delete important non-project files.
-- DO NOT fake completion. Avoid giant `TODO` blocks. If an external service is unavailable, build a robust `mock` implementation and define stable domain interfaces instead.
+- Do not edit files outside `TrumanWrld/` without approval.
+- Do not delete important files unless explicitly required and verified safe.
+- Do not fake completion.
+- Do not leave large TODO-based pseudo-implementations.
+- If an external dependency is unavailable, build a stable mock behind a clear interface.
 
-## Engineering Standards
-1. **MVP First:** Code must run, be testable, maintainable, auditable, and incrementally extensible.
-2. **TypeScript:** Strict type schemas with `zod`.
-3. **Idempotency:** Implement idempotent ingest flows to handle repetitive runs safely.
-4. **Mock External Side-effects:** By default, writing to Twitter or Threads must be a mocked interaction that enters the approval-queue locally.
+## Engineering Standard
+- MVP first: runnable, testable, maintainable, auditable, extensible.
+- Keep it minimal. Prefer the smallest viable change.
+- Preserve the main working path at all times.
+- Use strict TypeScript and `zod` for critical schemas.
+- Keep ingest and repeatable workflows idempotent.
+- External side effects must default to mock or approval-gated execution.
 
-## Work Process
-Every feature cycle must follow:
-- Small, single-purpose commits/changes.
-- Achieve a working main line.
-- Do not blow up the entire architecture in one pass.
-- Write a minimal test (unit or fixture) upon module completion.
+## Work Loop
+For every feature or fix:
+1. inspect existing code and choose the smallest viable path
+2. make a narrow, single-purpose change
+3. validate with typecheck, lint, and relevant tests
+4. fix failures before moving on
+5. update docs or config only if required
+
+## Commit Rules
+- Use **atomic commits** only.
+- One module, one concern, one commit.
+- Do not bundle unrelated changes.
+- Prefer incremental module-by-module commits over broad rewrites.
+
+## Test Rules
+- Every completed module must include at least one minimal test, fixture, or validation path.
+- Always run code checks before considering work complete.
+- Never claim success without verification.

@@ -176,11 +176,16 @@ export class EngagementAgent {
 
   private async engageTimeline(client: TwitterApi, myUserId: string, maxEngagements: number): Promise<EngagementRecord[]> {
     const records: EngagementRecord[] = [];
-    const queries = ['silicon valley startup', 'building in public', 'product design taste', 'indie hacker pipeline', 'solopreneur reality'];
+    const queries = [
+      'AI startup', 'building in public', 'startup founder',
+      'product design', 'indie hacker', 'solopreneur',
+      'AI agent', 'SaaS startup', 'tech startup funding',
+      'YC startup', 'founder life', 'startup advice'
+    ];
     const query = queries[Math.floor(Math.random() * queries.length)];
 
     const results = await client.v2.search(query, {
-      max_results: 30,
+      max_results: 50,
       'tweet.fields': ['public_metrics', 'author_id']
     });
 
@@ -193,7 +198,7 @@ export class EngagementAgent {
         retweetCount: tweet.public_metrics?.retweet_count || 0,
         replyCount: tweet.public_metrics?.reply_count || 0
       }
-    })).filter(c => c.metrics.likeCount > 5 || c.metrics.retweetCount > 2);
+    })).filter(c => c.metrics.likeCount > 1 || c.metrics.retweetCount > 0);
 
     logger.info({ query, rawResults: (results.data?.data || []).length, afterFilter: candidates.length }, 'X timeline search results');
 
