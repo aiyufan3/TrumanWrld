@@ -35,6 +35,7 @@ export class EngagementAgent {
   private readonly maxPerCycle: number;
   private readonly cooldownAccounts = new Map<string, number>();
   private readonly cooldownHours = 24;
+  private currentCommentAllowance = 3;
 
   constructor(
     private readonly provider: ICompletionProvider,
@@ -60,6 +61,14 @@ export class EngagementAgent {
 
     const records: EngagementRecord[] = [];
     let remaining = this.maxPerCycle;
+
+    // Enforce strict 3-comments-per-hour limit
+    const hourlyComments = await this.getHourlyCommentCount();
+    this.currentCommentAllowance = Math.max(0, 3 - hourlyComments);
+
+    if (this.currentCommentAllowance <= 0) {
+      logger.info('Hourly comment limit reached. Will only evaluate reposts this cycle.');
+    }
 
     // Phase 1: Reply to recent mentions
     try {
@@ -110,6 +119,8 @@ export class EngagementAgent {
         if (this.isOnCooldown(mention.author_id!)) continue;
 
         try {
+          if (this.currentCommentAllowance <= 0) continue; // Rate limit check
+
           const replyText = await this.generateReply(mention.text);
           if (!replyText) continue;
 
@@ -126,6 +137,7 @@ export class EngagementAgent {
             success: true
           });
 
+          this.currentCommentAllowance--;
           logger.info({ tweetId: mention.id, replyLength: replyText.length }, 'Replied to mention');
         } catch (error: any) {
           records.push({
@@ -197,6 +209,12 @@ export class EngagementAgent {
 
       try {
         const decision = await this.getEngagementDecision(candidate.text);
+
+        // Enforce rate limits on comments (quotes and replies)
+        if ((decision === 'quote' || decision === 'reply') && this.currentCommentAllowance <= 0) {
+          continue; // Skip if we hit the commenting ceiling, allow reposts to continue
+        }
+
         if (decision === 'skip') continue;
 
         const record = await this.executeEngagement(client, candidate, decision);
@@ -204,6 +222,9 @@ export class EngagementAgent {
         if (record.success) {
           engaged++;
           this.markCooldown(candidate.authorId);
+          if (decision === 'quote' || decision === 'reply') {
+            this.currentCommentAllowance--;
+          }
         }
       } catch (error: any) {
         logger.warn({ tweetId: candidate.id, error: error.message }, 'Engagement action failed');
@@ -423,6 +444,29 @@ Return ONLY the quote text.`
       records.map((r) => JSON.stringify({ ...r, loggedAt: new Date().toISOString() })).join('\n') +
       '\n';
     fs.appendFileSync(logPath, lines, 'utf-8');
+  }
+
+  private async getHourlyCommentCount(): Promise<number> {
+    const logPath = path.resolve(process.cwd(), 'runtime/hermes/engagement.ndjson');
+    if (!fs.existsSync(logPath)) return 0;
+
+    try {
+      const content = fs.readFileSync(logPath, 'utf-8');
+      const lines = content.split('\n').filter(Boolean);
+      const oneHourAgo = Date.now() - 60 * 60 * 1000;
+      let count = 0;
+
+      for (const line of lines) {
+        const record = JSON.parse(line);
+        if (record.success && (record.action === 'reply' || record.action === 'quote')) {
+          const loggedAt = new Date(record.loggedAt || record.executedAt).getTime();
+          if (loggedAt > oneHourAgo) count++;
+        }
+      }
+      return count;
+    } catch {
+      return 0;
+    }
   }
 }
 
