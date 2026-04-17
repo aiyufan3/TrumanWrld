@@ -1,73 +1,77 @@
-# TrumanWrld
+# TrumanWrld: Autonomous AI KOL Operating System
 
-**TrumanWrld** is an autonomous AI Key Opinion Leader (KOL) Operating System. It orchestrates content discovery, semantic ranking, drafting, human/AI review, and publishing across Social Media platforms (X and Threads). Designed to simulate a high-signal "AI × Capital × Taste" persona, TrumanWrld operates entirely autonomously or with a human-in-the-loop to ensure brand safety and quality.
+TrumanWrld is a fully autonomous AI Key Opinion Leader (KOL) Operating System. It is an end-to-end framework that operates a social media persona by discovering content, ranking ideas, generating drafts, self-evaluating for brand safety, and publishing directly to platforms like X and Threads.
 
-## 🚀 Features
+This project is built for technical users and developers learning how to build complex, multi-agent AI systems in production. We welcome forks, contributions, and adaptations for your own AI personas.
 
-- **Autonomous Background Daemon**: Post periodically (e.g. every 4-6 hours) without manual intervention.
-- **Smart Signal Discovery**: Fetches trending topics natively from X API or curates insights from RSS feeds (Hacker News, TechCrunch, etc.).
-- **Multi-Platform Publishing Support**: Ships native posts directly to X (via OAuth 1.0a) and Threads (via fixed tokens).
-- **Engagement Agent**: Auto-replies to `@mentions`, and intelligently decides whether to retweet, quote, or reply to specific timeline topics.
-- **Brand Guardian Check**: Hardcoded safety constraints prevent credential leakage, off-brand posts, and formatting errors before they ever leave the machine.
+## Architecture and Workflow
 
-## 🛠️ Architecture
+The system operates on a pipeline powered by specialized AI agents:
 
-TrumanWrld operates on a multi-agent architectural pipeline:
-1. **Signal Ingestion**: Reads a topic manually or automatically fetches one from X/RSS.
-2. **Evaluation & Ranking**: A prompt-driven MiniMax model ranks the signal's viability out of 100 based on the TrumanWrld Persona constraints.
-3. **Drafting**: Multi-platform variations are drafted simultaneously — one sharp tweet under 280 chars, and one conversational thread under 500 chars.
-4. **Guardian Review**: Passes the drafts through strict safety rules testing before releasing.
-5. **Publishing Adapter**: Pushes content out natively to X and Threads via API.
+1. Signal Ingestion: Automatically fetches raw data from X trending topics and RSS feeds (Hacker News, TechCrunch) or a curated evergreen signal bank.
+2. Ranking Agent: Evaluates the potential of a topic against the defined persona. Weak ideas are discarded.
+3. Drafting Agent: Generates platform-specific content (concise for X, conversational for Threads).
+4. Brand Guardian Agent: A strict review layer that prevents off-brand content, formatting errors, or credential leakage from ever leaving the machine.
+5. Engagement Agent: Searches the timeline for relevant discussions and decides whether to reply, quote, repost, or skip based on persona alignment.
 
-## 📦 Getting Started
+## Tech Stack and Tools
+
+- Language: TypeScript (Node.js)
+- LLM Integration: OpenAI-compatible Provider Interface (currently configured for MiniMax models, easily swappable to OpenAI, Anthropic, or Local models).
+- Platform APIs: Twitter API v2 (via twitter-api-v2), Threads API.
+- Runtime Coordination: Multi-agent orchestration using a centralized harness runner, prompt catalog, and autonomous evaluation loops.
+
+## Getting Started
 
 ### Prerequisites
-- [Node.js](https://nodejs.org/) (v18+)
-- [MiniMax API Key](https://api.minimaxi.com) (or any OpenAI-compatible provider)
-- (Optional) X Developer API keys
-- (Optional) Threads Developer credentials
+
+- Node.js (v18+)
+- An API key for an OpenAI-compatible LLM provider
+- X and Threads Developer API keys (if you intend to publish)
 
 ### Installation
 
-1. **Clone the repo**
+1. Clone the repository:
    ```bash
    git clone https://github.com/aiyufan3/TrumanWrld.git
    cd TrumanWrld
    ```
 
-2. **Install dependencies**
+2. Install dependencies:
    ```bash
    npm install
    ```
 
-3. **Environment Setup**
-   Copy `.env.example` to `.env` and configure your API tokens.
+3. Configure your environment variables. Copy the template and fill in your keys:
    ```bash
    cp .env.example .env
    ```
 
-4. **Build the typescript source (Optional but recommended)**
-   ```bash
-   npm run build
-   ```
+### Usage
 
-## 🎮 Usage
+Run the system in autonomous background daemon mode. It will wake up on randomized intervals (default 4-6 hours), discover a signal, execute the harness loop, and publish to connected platforms.
 
-### One-Shot Manual Mode
-Generate a single post by explicitly supplying a thought signal.
-\`\`\`bash
-npm run start -- --signal "Agentic AI isn't an engineering challenge, it's a systems orchestration challenge." --approve
-\`\`\`
-
-### Autonomous Daemon Mode
-Let TrumanWrld run in the background. It will automatically discover signals, draft, approve, and publish every 4-6 hours.
-\`\`\`bash
+```bash
 npm run daemon
-\`\`\`
+```
 
-## 🔒 Security
+For testing or manual intervention, provide a specific thought signal for the agent to process into a single post execution:
 
-TrumanWrld contains a strict native `SecurityGuard` layer that parses internal system states and blocks the agent if it detects API keys, tokens, or credential-like materials leaking into standard LLM prompts or output payloads. See `src/modules/security` for more information.
+```bash
+npm run start -- --signal "Your specific thought here" --approve
+```
 
-## 📜 License
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+## Customizing Your Agent
+
+TrumanWrld is designed to be easily forked and customized. If you want to change the persona from the default "AI x Capital x Taste" character to a completely custom persona, you only need to modify a few key files:
+
+- Persona Definition: Edit `prompts/system/persona.system.md` to redefine the voice, tone, and worldview of your agent.
+- Content Preferences: Update `src/modules/discovery/signalBank.ts` with evergreen thoughts that match your new persona.
+- Discovery Sources: Modify `config/rssFeeds.json` to scrape news and data from RSS feeds relevant to your specific niche.
+- Engagement Behavior: Adjust `prompts/system/engagement.system.md` to change how the agent interacts with other users on the timeline.
+
+## Open Source and Contributing
+
+TrumanWrld is actively maintained as an open-source educational resource and framework. Feel free to fork the repository, customize the agent for your own projects, and submit pull requests if you build useful new adapter skills or autonomous features. 
+
+This project is licensed under the MIT License.
