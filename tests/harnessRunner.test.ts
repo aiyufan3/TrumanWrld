@@ -45,17 +45,34 @@ afterEach(async () => {
 });
 
 describe('HarnessRunner', () => {
+  const rankingMock = {
+    topic_title: 'Agent harnesses matter',
+    source_type: 'other',
+    source_summary: 'mock',
+    recommended_bucket: 'reach_and_positioning',
+    primary_angle: 'mock',
+    best_platform: 'both',
+    content_archetype: 'operator_note',
+    scores: {
+      brand_fit: 8,
+      originality_potential: 8,
+      discussion_potential: 8,
+      reach_potential: 8,
+      positioning_value: 8,
+      timeliness: 8,
+      signal_density: 8,
+      risk_level: 2
+    },
+    total_score: 82,
+    why_now: 'mock',
+    why_trumanwrld: 'mock',
+    draftability: 'high',
+    notes: []
+  };
+
   it('persists artifacts and retries after evaluator feedback', async () => {
     const { runner, workspace, publisher } = await createHarnessHarness([
-      JSON.stringify({
-        relevance_to_persona: 8,
-        novelty: 8,
-        timeliness: 7,
-        discussion_potential: 8,
-        brand_fit: 9,
-        risk_level: 2,
-        total_score: 82
-      }),
+      JSON.stringify(rankingMock),
       'As an AI, the real moat is capital allocation.',
       'Builders who compound taste and tooling create harder-to-copy leverage.',
       'Taste turns model output into a product edge people actually feel.',
@@ -87,16 +104,33 @@ describe('HarnessRunner', () => {
   });
 
   it('pauses for approval and resumes from persisted state', async () => {
-    const { runner, workspace, publisher } = await createHarnessHarness([
-      JSON.stringify({
-        relevance_to_persona: 8,
-        novelty: 7,
-        timeliness: 7,
-        discussion_potential: 8,
+    const rankingMock2 = {
+      topic_title: 'Agent harnesses matter',
+      source_type: 'other',
+      source_summary: 'mock',
+      recommended_bucket: 'reach_and_positioning',
+      primary_angle: 'mock',
+      best_platform: 'both',
+      content_archetype: 'operator_note',
+      scores: {
         brand_fit: 8,
-        risk_level: 2,
-        total_score: 78
-      }),
+        originality_potential: 8,
+        discussion_potential: 8,
+        reach_potential: 8,
+        positioning_value: 8,
+        timeliness: 8,
+        signal_density: 8,
+        risk_level: 2
+      },
+      total_score: 78,
+      why_now: 'mock',
+      why_trumanwrld: 'mock',
+      draftability: 'high',
+      notes: []
+    };
+
+    const { runner, workspace, publisher } = await createHarnessHarness([
+      JSON.stringify(rankingMock2),
       'Operational taste matters more than raw model access.',
       'Threads audiences reward clear operator insight over generic AI hype.'
     ]);
@@ -148,7 +182,7 @@ async function createHarnessHarness(responses: string[]) {
     approvalQueue: new ApprovalQueue(),
     publisher,
     analytics: new AnalyticsService(),
-    learning: new LearningService(),
+    learning: new LearningService(':memory:'),
     workspace,
     maxDraftAttempts: 3
   });
