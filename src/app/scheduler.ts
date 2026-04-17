@@ -4,24 +4,39 @@ dotenv.config();
 import { logger } from '../utils/logger';
 import { getEnv } from '../utils/secrets';
 import { HermesOrchestrator } from './hermesOrchestrator';
+import fs from 'fs';
+import path from 'path';
 
-const MIN_HOURS = parseFloat(getEnv('HERMES_INTERVAL_MIN_HOURS') || '4');
-const MAX_HOURS = parseFloat(getEnv('HERMES_INTERVAL_MAX_HOURS') || '6');
-
-function randomIntervalMs(): number {
-  const hours = MIN_HOURS + Math.random() * (MAX_HOURS - MIN_HOURS);
-  return Math.round(hours * 60 * 60 * 1000);
-}
+const INTERVAL_MINS = parseInt(getEnv('HERMES_CYCLE_INTERVAL_MINUTES') || '10', 10);
+const SLEEP_MS = INTERVAL_MINS * 60 * 1000;
 
 function formatDuration(ms: number): string {
   const hours = Math.floor(ms / 3600000);
   const minutes = Math.floor((ms % 3600000) / 60000);
-  return `${hours}h ${minutes}m`;
+  const seconds = Math.floor((ms % 60000) / 1000);
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  if (minutes > 0) return `${minutes}m ${seconds}s`;
+  return `${seconds}s`;
+}
+
+function persistDaemonStatus(cycleCount: number, nextInMs: number, customStatus?: string) {
+  try {
+    const dir = path.resolve(process.cwd(), 'runtime/hermes');
+    fs.mkdirSync(dir, { recursive: true });
+    const payload = {
+      status: customStatus || 'running',
+      lastHeartbeat: new Date().toISOString(),
+      cycleCount,
+      nextCycleAt: new Date(Date.now() + nextInMs).toISOString()
+    };
+    fs.writeFileSync(path.join(dir, 'daemon_status.json'), JSON.stringify(payload, null, 2));
+  } catch (error) {
+    // Graceful fail
+  }
 }
 
 async function main() {
-  logger.info({ minHours: MIN_HOURS, maxHours: MAX_HOURS }, 'Starting TrumanWrld Hermes Daemon');
-
+  logger.info({ intervalMins: INTERVAL_MINS }, 'Starting TrumanWrld Hermes Daemon (Scheduled Loop)');
   const orchestrator = new HermesOrchestrator();
   let cycleCount = 0;
   let running = true;
@@ -29,45 +44,43 @@ async function main() {
   const shutdown = () => {
     logger.info('Hermes Daemon shutting down gracefully...');
     running = false;
+    persistDaemonStatus(cycleCount, 0, 'stopped');
   };
 
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
 
-  // Run first cycle immediately
+  // Initialize status on daemon boot
+  persistDaemonStatus(cycleCount, 0, 'booting');
+
   while (running) {
     cycleCount++;
     logger.info({ cycle: cycleCount }, '--- Hermes Cycle Starting ---');
+    persistDaemonStatus(cycleCount, 0, 'active');
 
     try {
       const report = await orchestrator.runCycle();
       logger.info(
-        {
-          cycle: cycleCount,
-          harnessStatus: report.harnessStatus,
-          engagementActions: report.engagementActions,
-          engagementSuccesses: report.engagementSuccesses
-        },
+        { cycle: cycleCount, harnessStatus: report.harnessStatus, likes: report.engagementSuccesses },
         '--- Hermes Cycle Complete ---'
       );
     } catch (error: any) {
       logger.error(
         { cycle: cycleCount, error: error.message },
-        '--- Hermes Cycle Failed (will retry next interval) ---'
+        '--- Hermes Cycle Failed ---'
       );
     }
 
     if (!running) break;
 
-    const sleepMs = randomIntervalMs();
+    persistDaemonStatus(cycleCount, SLEEP_MS, 'sleeping');
     logger.info(
-      { nextIn: formatDuration(sleepMs), cycle: cycleCount },
+      { nextIn: formatDuration(SLEEP_MS), cycle: cycleCount },
       'Hermes Daemon sleeping until next cycle'
     );
 
-    // Interruptible sleep
     await new Promise<void>((resolve) => {
-      const timer = setTimeout(resolve, sleepMs);
+      const timer = setTimeout(resolve, SLEEP_MS);
       const check = setInterval(() => {
         if (!running) {
           clearTimeout(timer);

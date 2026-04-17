@@ -4,8 +4,7 @@ import { createDefaultHarnessRunner } from '../harness/harnessRunner';
 import { MinimaxProvider } from '../adapters/model/minimaxProvider';
 import { SignalDiscoveryService } from '../modules/discovery/signalDiscovery';
 import { EngagementAgent } from '../modules/engagement/engagementAgent';
-import fs from 'fs';
-import path from 'path';
+import { LearningService } from '../modules/learning';
 
 export interface HermesCycleReport {
   cycleId: string;
@@ -23,6 +22,7 @@ export interface HermesCycleReport {
 export class HermesOrchestrator {
   private readonly discovery: SignalDiscoveryService;
   private readonly engagement: EngagementAgent;
+  private readonly learning: LearningService;
 
   constructor() {
     let provider: MinimaxProvider;
@@ -32,16 +32,11 @@ export class HermesOrchestrator {
       throw new Error('Model provider is required for autonomous mode.');
     }
 
+    this.learning = new LearningService();
     this.discovery = new SignalDiscoveryService(provider);
-    this.engagement = new EngagementAgent(provider);
+    this.engagement = new EngagementAgent(provider, this.learning);
   }
 
-  /**
-   * Run a single autonomous cycle:
-   * 1. Discover a signal
-   * 2. Run the full harness pipeline
-   * 3. Run engagement actions
-   */
   async runCycle(): Promise<HermesCycleReport> {
     const cycleId = `cycle-${Date.now()}`;
     const startedAt = new Date().toISOString();
@@ -56,7 +51,12 @@ export class HermesOrchestrator {
     let error: string | undefined;
 
     try {
-      // Phase 1: Discover signal
+      // Memory Lookup for injection into Harness
+      const playbookMemories = this.learning.getRelevantSkills('general');
+      const memoryContext = playbookMemories.length > 0 
+        ? `\n\n[Hermes Memory Playbooks]:\n${playbookMemories.join('\n')}`
+        : '';
+
       const signal = await this.discovery.discoverSignal();
       signalSource = signal.source;
       signalContent = signal.content;
@@ -65,18 +65,22 @@ export class HermesOrchestrator {
         'Signal discovered'
       );
 
-      // Phase 2: Run harness pipeline
+      // We append Memory Context to signalContent for simplistic robust prompt injection
+      const injectedSignalContent = signalContent + memoryContext;
+
       try {
         const runner = createDefaultHarnessRunner();
-        const autoApprove = isEnabled('HERMES_AUTO_APPROVE');
         const result = await runner.execute({
-          signalContent,
-          approve: autoApprove
+          signalContent: injectedSignalContent,
+          approve: getEnv('HERMES_AUTO_APPROVE').trim().toLowerCase() !== 'false'
         });
 
         harnessRunId = result.runId;
         harnessStatus = result.status;
         logger.info({ runId: result.runId, status: result.status }, 'Harness pipeline completed');
+
+        // Note: HarnessRunner internally triggers LearningService.learnFromOutcomes if integrated,
+        // but we'll record the cycle directly here.
       } catch (harnessError: any) {
         harnessStatus = 'failed';
         logger.error(
@@ -85,7 +89,6 @@ export class HermesOrchestrator {
         );
       }
 
-      // Phase 3: Run engagement
       try {
         const records = await this.engagement.runCycle();
         engagementActions = records.length;
@@ -112,20 +115,13 @@ export class HermesOrchestrator {
       error
     };
 
-    await this.persistCycleReport(report);
+    this.learning.recordCycle(report);
     logger.info(
       { cycleId, harnessStatus, engagementActions, engagementSuccesses },
       'Hermes autonomous cycle completed'
     );
 
     return report;
-  }
-
-  private async persistCycleReport(report: HermesCycleReport): Promise<void> {
-    const dir = path.resolve(process.cwd(), 'runtime/hermes');
-    fs.mkdirSync(dir, { recursive: true });
-    const logPath = path.join(dir, 'cycles.ndjson');
-    fs.appendFileSync(logPath, JSON.stringify(report) + '\n', 'utf-8');
   }
 }
 

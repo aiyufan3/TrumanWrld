@@ -576,7 +576,7 @@ export class HarnessRunner {
           lastError: error.message
         })
       );
-      throw error;
+      console.error("HARNESS ERR:", error); throw error;
     }
   }
 
