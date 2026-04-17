@@ -1,0 +1,29 @@
+{
+  "name": "trumanwrld",
+  "version": "0.1.0",
+  "description": "TrumanWrld MVP - Automated Personal Brand Management",
+  "main": "dist/index.js",
+  "scripts": {
+    "start": "tsx src/app/index.ts",
+    "daemon": "tsx src/app/scheduler.ts",
+    "auth:server": "tsx src/server/index.ts",
+    "build": "tsc",
+    "test": "vitest run",
+    "format": "prettier --write \"src/**/*.{ts,tsx}\" \"tests/**/*.{ts,tsx}\"",
+    "validate": "npm run build && npm run test"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "pino": "^9.0.0",
+    "pino-pretty": "^11.0.0",
+    "twitter-api-v2": "^1.29.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^20.12.7",
+    "prettier": "^3.8.3",
+    "tsx": "^4.19.1",
+    "typescript": "^5.4.5",
+    "vitest": "^1.6.0"
+  }
+}

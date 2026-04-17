@@ -1,0 +1,7 @@
+{
+  "passed": true,
+  "retryable": true,
+  "summary": "Draft package satisfies the planner goal: Turn the ingested signal into an approval-gated, persona-aligned draft package for X and Threads.",
+  "issues": [],
+  "feedback": []
+}

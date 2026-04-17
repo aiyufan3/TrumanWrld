@@ -1,0 +1,6 @@
+{
+  "id": "a8c6a94d-a5dd-4b21-aeb2-b7e8e1d38c24",
+  "source": "local",
+  "content": "Approval should move through a local UI instead of raw CLI flags.",
+  "receivedAt": "2026-04-16T22:14:34.133Z"
+}

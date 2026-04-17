@@ -1,0 +1,17 @@
+{
+  "id": "95f70adc-4e1e-48d9-9e5c-065311ddafdf",
+  "topic": "Topic from Signal a8c6a9",
+  "versions": [
+    {
+      "platform": "x",
+      "content": "Operator-grade AI systems need approval gates that survive crashes.",
+      "tone": "sharp"
+    },
+    {
+      "platform": "threads",
+      "content": "Threads readers want the operating model, not generic automation hype.",
+      "tone": "conversational"
+    }
+  ],
+  "status": "draft"
+}
