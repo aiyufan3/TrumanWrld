@@ -82,6 +82,7 @@ export class EngagementAgent {
       commentAllowance: this.currentCommentAllowance,
       likeAllowance: this.currentLikeAllowance,
       maxPerCycle: this.maxPerCycle,
+      xUserId: userId,
       threadsEngaged: !!threadsClientRes?.client
     }, 'Engagement cycle budgets loaded');
 
@@ -331,8 +332,9 @@ export class EngagementAgent {
         return cleaned as EngagementAction;
       }
       return 'like';
-    } catch {
+    } catch (err: any) {
       // When model is down (529 etc), default to liking — safe, silent, and builds the algorithm footprint
+      logger.info({ error: err?.message }, 'Engagement decision model unavailable, falling back to like');
       return 'like';
     }
   }
@@ -366,6 +368,7 @@ export class EngagementAgent {
       }
       return { tweetId: candidate.id, authorId: candidate.authorId, action: 'skip', executedAt: now, success: false };
     } catch (error: any) {
+      logger.warn({ tweetId: candidate.id, action, error: error.message }, 'Engagement execution failed');
       return { tweetId: candidate.id, authorId: candidate.authorId, action, executedAt: now, success: false, error: error.message };
     }
   }

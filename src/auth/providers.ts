@@ -264,7 +264,7 @@ export class ThreadsOAuthClient implements OAuthProviderClient {
       provider: 'threads',
       accessToken: longLived.accessToken,
       tokenType: longLived.tokenType,
-      userId: shortLived.user_id || profile.userId,
+      userId: String(shortLived.user_id || profile.userId),
       username: profile.username,
       displayName: profile.displayName,
       obtainedAt: new Date().toISOString(),
