@@ -24,6 +24,8 @@ import { ContentDraft, ContentDraftSchema } from '../schemas/models';
 import { logger } from '../utils/logger';
 import { getEnv } from '../utils/secrets';
 import { z } from 'zod';
+import fs from 'fs';
+import path from 'path';
 
 interface PendingAuthState {
   provider: 'x' | 'threads';
@@ -160,9 +162,17 @@ export class LocalAuthServer {
   async renderConsoleHtml(): Promise<string> {
     const statuses = await this.tokenStore.getStatuses();
     const entries = await this.loadRunEntries();
+    
+    let daemonStatus = null;
+    try {
+      const sp = path.resolve(process.cwd(), 'runtime/hermes/daemon_status.json');
+      if (fs.existsSync(sp)) daemonStatus = JSON.parse(fs.readFileSync(sp, 'utf-8'));
+    } catch { }
+
     return renderIndexPage({
       baseUrl: this.baseUrl(),
       statuses,
+      daemonStatus,
       xConfigured: this.providers.x.isConfigured(),
       threadsConfigured: this.providers.threads.isConfigured(),
       pendingApprovals: entries.filter((entry) => entry.stateStatus === 'awaiting_approval'),
@@ -617,6 +627,7 @@ function renderIndexPage(args: {
     displayName?: string;
     expiresAt?: string;
   }>;
+  daemonStatus: any;
   xConfigured: boolean;
   threadsConfigured: boolean;
   pendingApprovals: RunConsoleEntry[];
@@ -836,6 +847,12 @@ function renderIndexPage(args: {
         Base URL: <code>${escapeHtml(args.baseUrl)}</code><br />
         Configure provider callbacks to <code>${escapeHtml(args.baseUrl)}/auth/x/callback</code> and <code>${escapeHtml(args.baseUrl)}/auth/threads/callback</code>.
       </div>
+      ${args.daemonStatus ? `
+      <div class="meta" style="border: 1px solid var(--line); border-radius: 12px; padding: 12px; background: rgba(255,255,255,0.5);">
+         <strong>Hermes Daemon:</strong> <span class="dot ${args.daemonStatus.status === 'stopped' ? 'fail' : 'ok'}"></span> ${escapeHtml(args.daemonStatus.status)} <br/>
+         <span style="display:inline-block; margin-top: 4px;">Last check-in: ${new Date(args.daemonStatus.lastHeartbeat).toLocaleTimeString()} | Next Cycle: ${new Date(args.daemonStatus.nextCycleAt).toLocaleTimeString()} | Cycles: ${args.daemonStatus.cycleCount}</span>
+      </div>
+      ` : ''}
     </section>
 
     <section class="panel">
