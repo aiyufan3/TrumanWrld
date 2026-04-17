@@ -76,8 +76,11 @@ export class SignalDiscoveryService {
     });
 
     const queries = [
-      'AI agent infrastructure',
-      'LLM deployment production',
+      'silicon valley startup',
+      'building in public',
+      'indie hacker',
+      'solopreneur ARR',
+      'AI productivity tool',
       'startup capital moat'
     ];
 
@@ -94,7 +97,7 @@ export class SignalDiscoveryService {
       for (const tweet of results.data?.data || []) {
         const metrics = (tweet as any).public_metrics;
         // Only consider tweets with meaningful engagement
-        if (metrics && (metrics.like_count > 20 || metrics.retweet_count > 5)) {
+        if (metrics && (metrics.like_count >= 5 || metrics.retweet_count >= 2)) {
           signals.push(tweet.text);
         }
       }

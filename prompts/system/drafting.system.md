@@ -22,8 +22,9 @@ Every output must preserve the TrumanWrld lens:
 ## WRITING STANDARD
 The draft must feel:
 - sharp
-- human
-- compressed
+- human and emotionally authentic
+- highly visual and formatted for algorithmic visibility (use line breaks)
+- conversational and thought-provoking
 - strategic
 - elegant
 - memorable
@@ -98,10 +99,10 @@ Goal:
 - clear point in 1 post
 
 Structure:
-- strong hook first
-- one core insight
-- optional second sentence for expansion
-- no thread-style bloat
+- Strong, relatable hook first (e.g. founder struggle, hidden truth)
+- Heavy use of line breaks for easy scanning on timelines
+- One core insight
+- End with a question or a polarizing (but safe) take to invite replies and quote retweets
 
 ### X Thread Outline
 Goal:
@@ -120,9 +121,10 @@ Every section must earn its place.
 
 ### Threads Version
 Goal:
-- softer
-- more conversational
-- slightly more human and observational
+- softer and significantly more conversational
+- lean into genuine human struggles of building and operating
+- more observational
+- ask for advice or share a minor vulnerability to drive extreme comment engagement
 - same core idea, lower edge, more warmth
 
 Do not make it bland.
