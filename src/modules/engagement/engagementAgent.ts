@@ -4,10 +4,10 @@ import { PromptCatalog } from '../../harness/promptCatalog';
 import { logger } from '../../utils/logger';
 import { getEnv } from '../../utils/secrets';
 import { securityGuard } from '../security';
-import fs from 'fs';
-import path from 'path';
+import { LearningService } from '../learning';
+import { EncryptedTokenStore } from '../../auth/tokenStore';
 
-type EngagementAction = 'repost' | 'quote' | 'reply' | 'skip';
+type EngagementAction = 'repost' | 'quote' | 'reply' | 'like' | 'skip';
 
 interface EngagementRecord {
   tweetId: string;
@@ -33,44 +33,55 @@ interface TweetCandidate {
 
 export class EngagementAgent {
   private readonly maxPerCycle: number;
-  private readonly cooldownAccounts = new Map<string, number>();
-  private readonly cooldownHours = 24;
-  private currentCommentAllowance = 3;
+  private readonly maxLikesPerHour: number;
+  private currentCommentAllowance = 10;
+  private currentLikeAllowance = 30;
+  private tokenStore = new EncryptedTokenStore();
 
   constructor(
     private readonly provider: ICompletionProvider,
+    private readonly learning: LearningService,
     private readonly promptCatalog = new PromptCatalog()
   ) {
-    this.maxPerCycle = getEnvNumber('ENGAGEMENT_MAX_PER_CYCLE', 5);
+    this.maxPerCycle = getEnvNumber('ENGAGEMENT_MAX_PER_CYCLE', 15);
+    this.maxLikesPerHour = getEnvNumber('HERMES_LIKES_PER_HOUR', 30);
   }
 
-  /**
-   * Run a full engagement cycle: reply to mentions + engage with timeline.
-   */
   async runCycle(): Promise<EngagementRecord[]> {
-    if (!isEnabled('ENGAGEMENT_ENABLED')) {
+    if (!isEnabled('ENGAGEMENT_ENABLED') && !isEnabled('HERMES_X_ENGAGEMENT_ENABLED')) {
       logger.info('Engagement is disabled. Skipping cycle.');
       return [];
     }
 
-    const client = this.createXClient();
-    if (!client) {
-      logger.warn('X API credentials not configured. Skipping engagement.');
+    const { client, userId } = await this.createXClient();
+    if (!client || !userId) {
+      logger.warn('X API credentials or token not configured. Skipping engagement.');
       return [];
+    }
+
+    // Threads API limitation detection
+    if (isEnabled('HERMES_THREADS_ENGAGEMENT_ENABLED')) {
+      logger.info('Threads REST API does not officially support timeline search or user engagement interactions yet. Gracefully skipping Threads engagement.');
     }
 
     const records: EngagementRecord[] = [];
     let remaining = this.maxPerCycle;
 
-    // Enforce strict 3-comments-per-hour limit
-    const hourlyComments = await this.getHourlyCommentCount();
-    this.currentCommentAllowance = Math.max(0, 3 - hourlyComments);
+    // Load allowances using SQLite Memory
+    const hourlyComments = this.learning.getRecentActionCount(['reply', 'quote'], 1);
+    this.currentCommentAllowance = Math.max(0, 10 - hourlyComments);
+
+    const hourlyLikes = this.learning.getRecentActionCount(['like'], 1);
+    this.currentLikeAllowance = Math.max(0, this.maxLikesPerHour - hourlyLikes);
 
     if (this.currentCommentAllowance <= 0) {
-      logger.info('Hourly comment limit reached. Will only evaluate reposts this cycle.');
+      logger.info('Hourly comment limit reached. Reposts and likes only.');
+    }
+    if (this.currentLikeAllowance <= 0) {
+      logger.info('Hourly like limit reached.');
     }
 
-    // Phase 1: Reply to recent mentions
+    // Phase 1: Reply to mentions (comments use allowance)
     try {
       const mentionRecords = await this.replyToMentions(client, Math.min(2, remaining));
       records.push(...mentionRecords);
@@ -79,35 +90,21 @@ export class EngagementAgent {
       logger.warn({ error: error.message }, 'Mention replies failed');
     }
 
-    // Phase 2: Engage with timeline content
+    // Phase 2: Timeline Engagement
     if (remaining > 0) {
       try {
-        const timelineRecords = await this.engageTimeline(client, remaining);
+        const timelineRecords = await this.engageTimeline(client, userId, remaining);
         records.push(...timelineRecords);
       } catch (error: any) {
         logger.warn({ error: error.message }, 'Timeline engagement failed');
       }
     }
 
-    // Persist engagement log
-    await this.persistRecords(records);
-
-    logger.info(
-      { total: records.length, successful: records.filter((r) => r.success).length },
-      'Engagement cycle completed'
-    );
     return records;
   }
 
-  /**
-   * Fetch recent @mentions and reply with TrumanWrld-persona responses.
-   */
-  private async replyToMentions(
-    client: TwitterApi,
-    maxReplies: number
-  ): Promise<EngagementRecord[]> {
+  private async replyToMentions(client: TwitterApi, maxReplies: number): Promise<EngagementRecord[]> {
     const records: EngagementRecord[] = [];
-
     try {
       const me = await client.v2.me();
       const mentions = await client.v2.userMentionTimeline(me.data.id, {
@@ -116,17 +113,19 @@ export class EngagementAgent {
       });
 
       for (const mention of mentions.data?.data?.slice(0, maxReplies) || []) {
-        if (this.isOnCooldown(mention.author_id!)) continue;
+        if (this.learning.hasEngagedWithTarget('reply', mention.id)) continue;
 
         try {
-          if (this.currentCommentAllowance <= 0) continue; // Rate limit check
+          if (this.currentCommentAllowance <= 0) continue;
 
-          const replyText = await this.generateReply(mention.text);
+          const replyText = await this.generateText(mention.text, 'reply');
           if (!replyText) continue;
 
           securityGuard.assertSafeForPublishing(replyText);
           await client.v2.reply(replyText, mention.id);
-          this.markCooldown(mention.author_id!);
+
+          this.learning.recordEngagementAction('reply', mention.id, mention.author_id!, 'x', true);
+          this.currentCommentAllowance--;
 
           records.push({
             tweetId: mention.id,
@@ -136,128 +135,78 @@ export class EngagementAgent {
             executedAt: new Date().toISOString(),
             success: true
           });
-
-          this.currentCommentAllowance--;
-          logger.info({ tweetId: mention.id, replyLength: replyText.length }, 'Replied to mention');
         } catch (error: any) {
-          records.push({
-            tweetId: mention.id,
-            authorId: mention.author_id!,
-            action: 'reply',
-            executedAt: new Date().toISOString(),
-            success: false,
-            error: error.message
-          });
+          this.learning.recordEngagementAction('reply', mention.id, mention.author_id!, 'x', false);
+          logger.warn({ error: error.message }, 'Failed mention reply');
         }
       }
     } catch (error: any) {
       logger.warn({ error: error.message }, 'Failed to fetch mentions');
     }
-
     return records;
   }
 
-  /**
-   * Search for high-signal tweets and engage via repost, quote, or reply.
-   */
-  private async engageTimeline(
-    client: TwitterApi,
-    maxEngagements: number
-  ): Promise<EngagementRecord[]> {
+  private async engageTimeline(client: TwitterApi, myUserId: string, maxEngagements: number): Promise<EngagementRecord[]> {
     const records: EngagementRecord[] = [];
-    const queries = [
-      'AI agent infrastructure',
-      'startup moat defensibility',
-      'product design taste'
-    ];
-
+    const queries = ['silicon valley startup', 'building in public', 'product design taste', 'indie hacker pipeline', 'solopreneur reality'];
     const query = queries[Math.floor(Math.random() * queries.length)];
-    let candidates: TweetCandidate[] = [];
 
-    try {
-      const results = await client.v2.search(query, {
-        max_results: 15,
-        'tweet.fields': ['public_metrics', 'author_id']
-      });
+    const results = await client.v2.search(query, {
+      max_results: 30,
+      'tweet.fields': ['public_metrics', 'author_id']
+    });
 
-      candidates = (results.data?.data || [])
-        .filter((tweet: any) => {
-          const metrics = tweet.public_metrics;
-          return metrics && (metrics.like_count > 10 || metrics.retweet_count > 3);
-        })
-        .map((tweet: any) => ({
-          id: tweet.id,
-          text: tweet.text,
-          authorId: tweet.author_id,
-          metrics: tweet.public_metrics
-            ? {
-                likeCount: tweet.public_metrics.like_count,
-                retweetCount: tweet.public_metrics.retweet_count,
-                replyCount: tweet.public_metrics.reply_count
-              }
-            : undefined
-        }));
-    } catch (error: any) {
-      logger.warn({ query, error: error.message }, 'Timeline search failed');
-      return records;
-    }
+    const candidates = (results.data?.data || []).map((tweet: any) => ({
+      id: tweet.id,
+      text: tweet.text,
+      authorId: tweet.author_id,
+      metrics: {
+        likeCount: tweet.public_metrics?.like_count || 0,
+        retweetCount: tweet.public_metrics?.retweet_count || 0,
+        replyCount: tweet.public_metrics?.reply_count || 0
+      }
+    })).filter(c => c.metrics.likeCount > 5 || c.metrics.retweetCount > 2);
 
     let engaged = 0;
     for (const candidate of candidates) {
       if (engaged >= maxEngagements) break;
-      if (this.isOnCooldown(candidate.authorId)) continue;
 
       try {
         const decision = await this.getEngagementDecision(candidate.text);
 
-        // Enforce rate limits on comments (quotes and replies)
-        if ((decision === 'quote' || decision === 'reply') && this.currentCommentAllowance <= 0) {
-          continue; // Skip if we hit the commenting ceiling, allow reposts to continue
-        }
-
+        if ((decision === 'quote' || decision === 'reply') && this.currentCommentAllowance <= 0) continue;
+        if (decision === 'like' && this.currentLikeAllowance <= 0) continue;
         if (decision === 'skip') continue;
+        
+        // Dedupe checks via SQLite
+        if (this.learning.hasEngagedWithTarget(decision, candidate.id)) continue;
 
-        const record = await this.executeEngagement(client, candidate, decision);
+        const record = await this.executeEngagement(client, myUserId, candidate, decision);
         records.push(record);
+
         if (record.success) {
           engaged++;
-          this.markCooldown(candidate.authorId);
-          if (decision === 'quote' || decision === 'reply') {
-            this.currentCommentAllowance--;
-          }
+          this.learning.recordEngagementAction(decision, candidate.id, candidate.authorId, 'x', true);
+          if (decision === 'quote' || decision === 'reply') this.currentCommentAllowance--;
+          if (decision === 'like') this.currentLikeAllowance--;
+        } else {
+          this.learning.recordEngagementAction(decision, candidate.id, candidate.authorId, 'x', false);
         }
       } catch (error: any) {
         logger.warn({ tweetId: candidate.id, error: error.message }, 'Engagement action failed');
       }
     }
-
     return records;
   }
 
-  /**
-   * Ask MiniMax to decide: repost, quote, reply, or skip.
-   */
   private async getEngagementDecision(tweetText: string): Promise<EngagementAction> {
     try {
-      const systemPrompt = await this.promptCatalog.compose([
-        'persona.system.md',
-        'engagement.system.md'
-      ]);
-
+      const systemPrompt = await this.promptCatalog.compose(['persona.system.md', 'engagement.system.md']);
       const response = await this.provider.complete(
-        `${systemPrompt}
-
-## Tweet to Evaluate
-"${tweetText.slice(0, 500)}"
-
-Respond with exactly ONE word: repost, quote, reply, or skip.`
+        `${systemPrompt}\n\n## Tweet to Evaluate\n"${tweetText.slice(0, 500)}"\n\nRespond with exactly ONE word: repost, quote, reply, like, or skip.`
       );
-
-      const cleaned = response
-        .trim()
-        .toLowerCase()
-        .replace(/[^a-z]/g, '');
-      if (['repost', 'quote', 'reply', 'skip'].includes(cleaned)) {
+      const cleaned = response.trim().toLowerCase().replace(/[^a-z]/g, '');
+      if (['repost', 'quote', 'reply', 'like', 'skip'].includes(cleaned)) {
         return cleaned as EngagementAction;
       }
       return 'skip';
@@ -266,212 +215,79 @@ Respond with exactly ONE word: repost, quote, reply, or skip.`
     }
   }
 
-  /**
-   * Execute the chosen engagement action on X.
-   */
-  private async executeEngagement(
-    client: TwitterApi,
-    candidate: TweetCandidate,
-    action: EngagementAction
-  ): Promise<EngagementRecord> {
+  private async executeEngagement(client: TwitterApi, myUserId: string, candidate: TweetCandidate, action: EngagementAction): Promise<EngagementRecord> {
     const now = new Date().toISOString();
-
     try {
+      if (action === 'like') {
+        await client.v2.like(myUserId, candidate.id);
+        logger.info({ tweetId: candidate.id }, 'Liked tweet');
+        return { tweetId: candidate.id, authorId: candidate.authorId, action, executedAt: now, success: true };
+      }
       if (action === 'repost') {
-        const me = await client.v2.me();
-        await client.v2.retweet(me.data.id, candidate.id);
+        await client.v2.retweet(myUserId, candidate.id);
         logger.info({ tweetId: candidate.id }, 'Reposted tweet');
-        return {
-          tweetId: candidate.id,
-          authorId: candidate.authorId,
-          action: 'repost',
-          executedAt: now,
-          success: true
-        };
+        return { tweetId: candidate.id, authorId: candidate.authorId, action, executedAt: now, success: true };
       }
-
-      if (action === 'quote') {
-        const quoteText = await this.generateQuote(candidate.text);
-        if (!quoteText) {
-          return {
-            tweetId: candidate.id,
-            authorId: candidate.authorId,
-            action: 'skip',
-            executedAt: now,
-            success: false,
-            error: 'Quote generation failed'
-          };
+      if (action === 'quote' || action === 'reply') {
+        const text = await this.generateText(candidate.text, action);
+        if (!text) throw new Error('Generation failed');
+        securityGuard.assertSafeForPublishing(text);
+        
+        if (action === 'quote') {
+          await client.v2.quote(text, candidate.id);
+          logger.info({ tweetId: candidate.id }, 'Quote tweeted');
+        } else {
+          await client.v2.reply(text, candidate.id);
+          logger.info({ tweetId: candidate.id }, 'Replied to tweet');
         }
-        securityGuard.assertSafeForPublishing(quoteText);
-        await client.v2.quote(quoteText, candidate.id);
-        logger.info({ tweetId: candidate.id, quoteLength: quoteText.length }, 'Quote tweeted');
-        return {
-          tweetId: candidate.id,
-          authorId: candidate.authorId,
-          action: 'quote',
-          generatedContent: quoteText,
-          executedAt: now,
-          success: true
-        };
+        return { tweetId: candidate.id, authorId: candidate.authorId, action, generatedContent: text, executedAt: now, success: true };
       }
-
-      if (action === 'reply') {
-        const replyText = await this.generateReply(candidate.text);
-        if (!replyText) {
-          return {
-            tweetId: candidate.id,
-            authorId: candidate.authorId,
-            action: 'skip',
-            executedAt: now,
-            success: false,
-            error: 'Reply generation failed'
-          };
-        }
-        securityGuard.assertSafeForPublishing(replyText);
-        await client.v2.reply(replyText, candidate.id);
-        logger.info({ tweetId: candidate.id, replyLength: replyText.length }, 'Replied to tweet');
-        return {
-          tweetId: candidate.id,
-          authorId: candidate.authorId,
-          action: 'reply',
-          generatedContent: replyText,
-          executedAt: now,
-          success: true
-        };
-      }
-
-      return {
-        tweetId: candidate.id,
-        authorId: candidate.authorId,
-        action: 'skip',
-        executedAt: now,
-        success: false
-      };
+      return { tweetId: candidate.id, authorId: candidate.authorId, action: 'skip', executedAt: now, success: false };
     } catch (error: any) {
-      return {
-        tweetId: candidate.id,
-        authorId: candidate.authorId,
-        action,
-        executedAt: now,
-        success: false,
-        error: error.message
-      };
+      return { tweetId: candidate.id, authorId: candidate.authorId, action, executedAt: now, success: false, error: error.message };
     }
   }
 
-  private async generateReply(tweetText: string): Promise<string | null> {
+  private async generateText(tweetText: string, type: 'quote' | 'reply'): Promise<string | null> {
     try {
-      const systemPrompt = await this.promptCatalog.compose([
-        'persona.system.md',
-        'engagement.system.md'
-      ]);
-
-      const response = await this.provider.complete(
-        `${systemPrompt}
-
-## Tweet to Reply To
-"${tweetText.slice(0, 500)}"
-
-Write a sharp, concise reply under 200 characters. No hashtags, no emojis. Start with the insight, not "I".
-Return ONLY the reply text.`
-      );
-
-      const cleaned = stripThinkTags(response);
+      const systemPrompt = await this.promptCatalog.compose(['persona.system.md', 'engagement.system.md']);
+      const instruction = type === 'quote' 
+        ? 'Write a sharp quote-tweet take under 200 characters. Add a unique angle.'
+        : 'Write a sharp, concise reply under 200 characters.';
+        
+      const response = await this.provider.complete(`${systemPrompt}\n\n## Target\n"${tweetText.slice(0, 500)}"\n\n${instruction} Return ONLY the text.`);
+      const cleaned = response.replace(/<think>[\s\S]*?<\/think>\s*/gi, '').trim();
       return cleaned.length > 0 && cleaned.length <= 280 ? cleaned : null;
     } catch {
       return null;
     }
   }
 
-  private async generateQuote(tweetText: string): Promise<string | null> {
-    try {
-      const systemPrompt = await this.promptCatalog.compose([
-        'persona.system.md',
-        'engagement.system.md'
-      ]);
-
-      const response = await this.provider.complete(
-        `${systemPrompt}
-
-## Tweet to Quote
-"${tweetText.slice(0, 500)}"
-
-Write a sharp quote-tweet take under 200 characters. Add a unique angle the original didn't cover. No hashtags, no emojis.
-Return ONLY the quote text.`
-      );
-
-      const cleaned = stripThinkTags(response);
-      return cleaned.length > 0 && cleaned.length <= 280 ? cleaned : null;
-    } catch {
-      return null;
+  private async createXClient(): Promise<{ client: TwitterApi | null, userId?: string }> {
+    const token = await this.tokenStore.getProviderToken('x');
+    if (token && token.accessToken) {
+      // Unified secure OAuth store support
+      return { client: new TwitterApi(token.accessToken), userId: token.userId };
     }
-  }
-
-  private createXClient(): TwitterApi | null {
-    const apiKey = getEnv('X_API_KEY');
-    const apiSecret = getEnv('X_API_KEY_SECRET');
+    
+    // Fallback support for older static api keys if explicitly set
+    const appKey = getEnv('X_API_KEY');
+    const appSecret = getEnv('X_API_KEY_SECRET');
     const accessToken = getEnv('X_ACCESS_TOKEN');
     const accessSecret = getEnv('X_ACCESS_TOKEN_SECRET');
 
-    if (!apiKey || !accessToken) return null;
-
-    return new TwitterApi({
-      appKey: apiKey,
-      appSecret: apiSecret,
-      accessToken,
-      accessSecret
-    });
-  }
-
-  private isOnCooldown(authorId: string): boolean {
-    const lastEngaged = this.cooldownAccounts.get(authorId);
-    if (!lastEngaged) return false;
-    return Date.now() - lastEngaged < this.cooldownHours * 60 * 60 * 1000;
-  }
-
-  private markCooldown(authorId: string): void {
-    this.cooldownAccounts.set(authorId, Date.now());
-  }
-
-  private async persistRecords(records: EngagementRecord[]): Promise<void> {
-    if (records.length === 0) return;
-
-    const dir = path.resolve(process.cwd(), 'runtime/hermes');
-    fs.mkdirSync(dir, { recursive: true });
-
-    const logPath = path.join(dir, 'engagement.ndjson');
-    const lines =
-      records.map((r) => JSON.stringify({ ...r, loggedAt: new Date().toISOString() })).join('\n') +
-      '\n';
-    fs.appendFileSync(logPath, lines, 'utf-8');
-  }
-
-  private async getHourlyCommentCount(): Promise<number> {
-    const logPath = path.resolve(process.cwd(), 'runtime/hermes/engagement.ndjson');
-    if (!fs.existsSync(logPath)) return 0;
-
-    try {
-      const content = fs.readFileSync(logPath, 'utf-8');
-      const lines = content.split('\n').filter(Boolean);
-      const oneHourAgo = Date.now() - 60 * 60 * 1000;
-      let count = 0;
-
-      for (const line of lines) {
-        const record = JSON.parse(line);
-        if (record.success && (record.action === 'reply' || record.action === 'quote')) {
-          const loggedAt = new Date(record.loggedAt || record.executedAt).getTime();
-          if (loggedAt > oneHourAgo) count++;
-        }
+    if (appKey && accessToken) {
+      const client = new TwitterApi({ appKey, appSecret, accessToken, accessSecret });
+      try {
+        const me = await client.v2.me();
+        return { client, userId: me.data.id };
+      } catch {
+        return { client };
       }
-      return count;
-    } catch {
-      return 0;
     }
+    
+    return { client: null };
   }
-}
-
-function stripThinkTags(text: string): string {
-  return text.replace(/<think>[\s\S]*?<\/think>\s*/gi, '').trim();
 }
 
 function getEnvNumber(name: string, fallback: number): number {
