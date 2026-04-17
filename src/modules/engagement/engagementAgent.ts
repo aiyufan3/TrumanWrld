@@ -165,8 +165,7 @@ export class EngagementAgent {
     try {
       const results = await client.v2.search(query, {
         max_results: 15,
-        'tweet.fields': ['public_metrics', 'author_id'],
-        sort_order: 'relevance'
+        'tweet.fields': ['public_metrics', 'author_id']
       });
 
       candidates = (results.data?.data || [])
