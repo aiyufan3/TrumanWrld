@@ -15,18 +15,20 @@ export class ThreadsApiClient {
 
   async getMentions(userId: string = 'me'): Promise<ThreadsTweet[]> {
     try {
-      const url = `${this.baseUrl}/${userId}/mentions?fields=id,text,username,replies_count,likes_count&access_token=${this.accessToken}`;
+      const url = `${this.baseUrl}/${userId}/mentions?fields=id,text,username&access_token=${this.accessToken}`;
       const response = await fetch(url);
       if (!response.ok) {
+        const body = await response.text().catch(() => '');
+        logger.warn({ status: response.status, body: body.slice(0, 200) }, 'Threads mentions API error detail');
         throw new Error(`Mentions fetch failed HTTP ${response.status}`);
       }
-      const data = await response.json();
+      const data = await response.json() as any;
       return (data.data || []).map((t: any) => ({
         id: t.id,
         text: t.text || '',
         authorId: t.username || 'unknown',
-        likeCount: t.likes_count || 0,
-        replyCount: t.replies_count || 0
+        likeCount: 0,
+        replyCount: 0
       }));
     } catch (error: any) {
       logger.warn({ error: error.message }, 'Failed to fetch Threads mentions via Graph API');
@@ -36,18 +38,20 @@ export class ThreadsApiClient {
 
   async searchTimeline(query: string): Promise<ThreadsTweet[]> {
     try {
-      // Best effort assumption of recently launched Threads Search endpoint.
-      const url = `${this.baseUrl}/search?q=${encodeURIComponent(query)}&fields=id,text,username,likes_count&access_token=${this.accessToken}`;
+      // Official Threads keyword search endpoint: GET /keyword_search
+      const url = `${this.baseUrl}/keyword_search?q=${encodeURIComponent(query)}&search_type=RECENT&fields=id,text,username&access_token=${this.accessToken}`;
       const response = await fetch(url);
       if (!response.ok) {
+        const body = await response.text().catch(() => '');
+        logger.warn({ status: response.status, body: body.slice(0, 200) }, 'Threads search API error detail');
         throw new Error(`Search fetch failed HTTP ${response.status}`);
       }
-      const data = await response.json();
+      const data = await response.json() as any;
       return (data.data || []).map((t: any) => ({
         id: t.id,
         text: t.text || '',
         authorId: t.username || 'unknown',
-        likeCount: t.likes_count || 0
+        likeCount: 0
       }));
     } catch (error: any) {
       logger.warn({ error: error.message }, 'Failed to fetch Threads keyword search via Graph API');
@@ -66,9 +70,12 @@ export class ThreadsApiClient {
         access_token: this.accessToken
       });
       const createRes = await fetch(createUrl, { method: 'POST', body, headers: { 'Content-type': 'application/x-www-form-urlencoded' }});
-      if (!createRes.ok) throw new Error('Failed to create reply container');
+      if (!createRes.ok) {
+        const detail = await createRes.text().catch(() => '');
+        throw new Error(`Failed to create reply container: HTTP ${createRes.status} ${detail.slice(0, 200)}`);
+      }
       
-      const container = await createRes.json();
+      const container = await createRes.json() as any;
       if (!container.id) throw new Error('Reply container returned no ID');
 
       // 2. Publish the container
@@ -78,8 +85,12 @@ export class ThreadsApiClient {
         access_token: this.accessToken
       });
       const publishRes = await fetch(publishUrl, { method: 'POST', body: publishBody, headers: { 'Content-type': 'application/x-www-form-urlencoded' } });
-      if (!publishRes.ok) throw new Error('Failed to publish reply');
+      if (!publishRes.ok) {
+        const detail = await publishRes.text().catch(() => '');
+        throw new Error(`Failed to publish reply: HTTP ${publishRes.status} ${detail.slice(0, 200)}`);
+      }
 
+      logger.info({ targetMediaId }, 'Threads reply published successfully');
     } catch (error: any) {
       logger.warn({ error: error.message, targetMediaId }, 'Failed to execute Threads reply');
       throw error;

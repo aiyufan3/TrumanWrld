@@ -56,7 +56,7 @@ export class EngagementAgent {
 
     const { client, userId } = await this.createXClient();
     if (!client || !userId) {
-      logger.warn('X API credentials or token not configured. Skipping engagement.');
+      logger.warn('X API credentials or token not configured. Skipping ALL engagement.');
       return [];
     }
 
@@ -78,12 +78,12 @@ export class EngagementAgent {
     const hourlyLikes = this.learning.getRecentActionCount(['like'], 1);
     this.currentLikeAllowance = Math.max(0, this.maxLikesPerHour - hourlyLikes);
 
-    if (this.currentCommentAllowance <= 0) {
-      logger.info('Hourly comment limit reached. Reposts and likes only.');
-    }
-    if (this.currentLikeAllowance <= 0) {
-      logger.info('Hourly like limit reached.');
-    }
+    logger.info({
+      commentAllowance: this.currentCommentAllowance,
+      likeAllowance: this.currentLikeAllowance,
+      maxPerCycle: this.maxPerCycle,
+      threadsEngaged: !!threadsClientRes?.client
+    }, 'Engagement cycle budgets loaded');
 
     // Phase 1: Reply to mentions (comments use allowance)
     try {
@@ -127,6 +127,7 @@ export class EngagementAgent {
       }
     }
 
+    logger.info({ total: records.length, successful: records.filter(r => r.success).length }, 'Engagement cycle completed');
     return records;
   }
 
@@ -193,6 +194,8 @@ export class EngagementAgent {
         replyCount: tweet.public_metrics?.reply_count || 0
       }
     })).filter(c => c.metrics.likeCount > 5 || c.metrics.retweetCount > 2);
+
+    logger.info({ query, rawResults: (results.data?.data || []).length, afterFilter: candidates.length }, 'X timeline search results');
 
     let engaged = 0;
     for (const candidate of candidates) {

@@ -69,11 +69,13 @@ export class EvaluatorAgent {
       }
 
       if (version.platform === 'x' && trimmed.length > 280) {
+        // Auto-truncate rather than rejecting — we want autonomous posting
+        version.content = trimmed.slice(0, 277) + '...';
         issues.push({
-          code: 'x_character_limit',
-          message: `X draft is ${trimmed.length} characters, exceeding the 280 character limit.`,
-          severity: 'error',
-          retryable: true
+          code: 'x_auto_truncated',
+          message: `X draft was ${trimmed.length} chars, auto-truncated to 280.`,
+          severity: 'warning',
+          retryable: false
         });
       }
 
