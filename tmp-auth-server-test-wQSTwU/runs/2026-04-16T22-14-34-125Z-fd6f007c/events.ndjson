@@ -1,5 +1,0 @@
-{"at":"2026-04-16T22:14:34.130Z","event":"run_started","resume":false,"approve":false}
-{"at":"2026-04-16T22:14:34.141Z","event":"step_completed","step":"ingestion","artifact":"artifacts/signal.json"}
-{"at":"2026-04-16T22:14:34.145Z","event":"step_completed","step":"planner","artifact":"artifacts/plan.json"}
-{"at":"2026-04-16T22:14:34.148Z","event":"step_completed","step":"ranking","artifact":"artifacts/score.json"}
-{"at":"2026-04-16T22:14:34.153Z","event":"awaiting_approval","draftId":"95f70adc-4e1e-48d9-9e5c-065311ddafdf"}
