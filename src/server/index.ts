@@ -1,3 +1,6 @@
+import * as dotenv from 'dotenv';
+dotenv.config();
+
 import { logger } from '../utils/logger';
 import { LocalAuthServer } from './authServer';
 
