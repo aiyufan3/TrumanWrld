@@ -535,7 +535,7 @@ function getXScopes(): string {
 }
 
 function getThreadsScopes(): string {
-  return getEnv('THREADS_OAUTH_SCOPES') || 'threads_basic,threads_content_publish';
+  return getEnv('THREADS_OAUTH_SCOPES') || 'threads_basic,threads_content_publish,threads_manage_replies,threads_read_replies,threads_manage_mentions,threads_keyword_search';
 }
 
 function toExpiry(expiresInSeconds?: number): string | undefined {

@@ -71,14 +71,14 @@ export class GeneratorAgent {
             platform: 'x',
             content:
               `${topic.topic_title}: model access is no longer the moat. ` +
-              'Operational taste, distribution, and feedback loops are.',
+              `Operational taste, distribution, and feedback loops are. [${Date.now()}]`,
             tone: 'sharp'
           },
           {
             platform: 'threads',
             content:
               `${topic.topic_title} is not a model story anymore. The edge is how fast you can ` +
-              'turn signals into drafts, let an evaluator tear them down, and recover from failures.',
+              `turn signals into drafts, let an evaluator tear them down, and recover from failures. [${Date.now()}]`,
             tone: 'conversational'
           }
         ]

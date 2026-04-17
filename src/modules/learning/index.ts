@@ -166,4 +166,19 @@ export class LearningService {
       return false;
     }
   }
+
+  hasRecentlyPublished(signalContent: string, hoursBack: number): boolean {
+    try {
+      const timeThreshold = new Date(Date.now() - hoursBack * 60 * 60 * 1000).toISOString();
+      // Match on the first 60 chars of the signal to catch RSS headlines that keep returning
+      const needle = signalContent.slice(0, 60).replace(/'/g, "''");
+      const stmt = this.db.prepare(
+        `SELECT COUNT(*) as cnt FROM publish_history WHERE content LIKE ? AND publishedAt >= ?`
+      );
+      const row = stmt.get(`%${needle}%`, timeThreshold) as { cnt: number };
+      return row.cnt > 0;
+    } catch {
+      return false;
+    }
+  }
 }

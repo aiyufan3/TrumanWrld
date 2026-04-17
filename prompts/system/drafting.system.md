@@ -121,14 +121,18 @@ Every section must earn its place.
 
 ### Threads Version
 Goal:
-- softer and significantly more conversational
-- lean into genuine human struggles of building and operating
-- more observational
-- ask for advice or share a minor vulnerability to drive extreme comment engagement
-- same core idea, lower edge, more warmth
+- UNDER 200 CHARACTERS. Shorter is always better on Threads.
+- maximally controversial, provocative, and internet-native
+- should feel like a hot take from someone who builds things
+- designed to trigger debate, replies, and shares
+- lean into cultural tension, founder pain, or an uncomfortable truth
+- no explanation, no context, no hedging — just the take
+- if it doesn't make someone want to argue, it's too safe
 
-Do not make it bland.
-It should still sound like TrumanWrld, just less blade-forward.
+Examples of energy:
+- "Most AI startups are just wrappers with a pitch deck. The founders know it. The VCs know it. Everyone's pretending."
+- "You don't have a distribution problem. You have a taste problem."
+- "The best product people I know have never read a single product management book."
 
 ## PREFERRED HOOK PATTERNS
 Use only when appropriate:

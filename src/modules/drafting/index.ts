@@ -45,7 +45,7 @@ ${topic.topic_title}
 Total score: ${topic.total_score}
 ${feedbackBlock}
 
-Write exactly one conversational but high-signal Threads post. STRICT LIMIT: under 500 characters.`);
+Write exactly one Threads hot take. MUST BE UNDER 200 CHARACTERS. Be controversial, be sharp, be internet-native. No filler. Just the take.`);
 
     return ContentDraftSchema.parse({
       id: crypto.randomUUID(),

@@ -6,6 +6,7 @@ import { getEnv } from '../../utils/secrets';
 import { securityGuard } from '../security';
 import { LearningService } from '../learning';
 import { EncryptedTokenStore } from '../../auth/tokenStore';
+import { ThreadsApiClient, ThreadsTweet } from '../../adapters/threadsApiClient';
 
 type EngagementAction = 'repost' | 'quote' | 'reply' | 'like' | 'skip';
 
@@ -59,9 +60,12 @@ export class EngagementAgent {
       return [];
     }
 
-    // Threads API limitation detection
+    let threadsClientRes = null;
     if (isEnabled('HERMES_THREADS_ENGAGEMENT_ENABLED')) {
-      logger.info('Threads REST API does not officially support timeline search or user engagement interactions yet. Gracefully skipping Threads engagement.');
+      threadsClientRes = await this.createThreadsClient();
+      if (!threadsClientRes.client) {
+        logger.warn('Threads API credentials not configured but engagement enabled. Skipping Threads.');
+      }
     }
 
     const records: EngagementRecord[] = [];
@@ -90,13 +94,36 @@ export class EngagementAgent {
       logger.warn({ error: error.message }, 'Mention replies failed');
     }
 
-    // Phase 2: Timeline Engagement
-    if (remaining > 0) {
+    // Phase 1.5: Threads Mentions
+    if (threadsClientRes && threadsClientRes.client && remaining > 0) {
+      try {
+        const tMentionRecords = await this.replyToThreadsMentions(threadsClientRes.client, threadsClientRes.userId!, Math.min(2, remaining));
+        records.push(...tMentionRecords);
+        remaining -= tMentionRecords.filter((r) => r.success).length;
+      } catch (error: any) {
+        logger.warn({ error: error.message }, 'Threads Mention replies failed');
+      }
+    }
+
+    // Phase 2: X Timeline Engagement
+    if (remaining > 0 && client && userId) {
       try {
         const timelineRecords = await this.engageTimeline(client, userId, remaining);
         records.push(...timelineRecords);
+        remaining -= timelineRecords.filter((r) => r.success).length;
       } catch (error: any) {
-        logger.warn({ error: error.message }, 'Timeline engagement failed');
+        logger.warn({ error: error.message }, 'X Timeline engagement failed');
+      }
+    }
+
+    // Phase 3: Threads Timeline Engagement
+    if (remaining > 0 && threadsClientRes && threadsClientRes.client) {
+      try {
+        const tTimelineRecords = await this.engageThreadsTimeline(threadsClientRes.client, threadsClientRes.userId!, remaining);
+        records.push(...tTimelineRecords);
+        remaining -= tTimelineRecords.filter((r) => r.success).length;
+      } catch (error: any) {
+        logger.warn({ error: error.message }, 'Threads Timeline engagement failed');
       }
     }
 
@@ -199,6 +226,92 @@ export class EngagementAgent {
     return records;
   }
 
+  private async replyToThreadsMentions(client: ThreadsApiClient, myUserId: string, maxReplies: number): Promise<EngagementRecord[]> {
+    const records: EngagementRecord[] = [];
+    try {
+      const mentions = await client.getMentions(myUserId);
+      for (const mention of mentions.slice(0, maxReplies)) {
+        if (this.learning.hasEngagedWithTarget('reply', mention.id)) continue;
+
+        try {
+          if (this.currentCommentAllowance <= 0) continue;
+
+          const replyText = await this.generateText(mention.text, 'reply');
+          if (!replyText) continue;
+
+          securityGuard.assertSafeForPublishing(replyText);
+          await client.reply(replyText, mention.id, myUserId);
+
+          this.learning.recordEngagementAction('reply', mention.id, mention.authorId!, 'threads', true);
+          this.currentCommentAllowance--;
+
+          records.push({
+            tweetId: mention.id,
+            authorId: mention.authorId!,
+            action: 'reply',
+            generatedContent: replyText,
+            executedAt: new Date().toISOString(),
+            success: true
+          });
+        } catch (error: any) {
+          this.learning.recordEngagementAction('reply', mention.id, mention.authorId!, 'threads', false);
+        }
+      }
+    } catch (error: any) {
+      logger.warn({ error: error.message }, 'Failed to process Threads mentions');
+    }
+    return records;
+  }
+
+  private async engageThreadsTimeline(client: ThreadsApiClient, myUserId: string, maxEngagements: number): Promise<EngagementRecord[]> {
+    const records: EngagementRecord[] = [];
+    const queries = ['silicon valley startup', 'building in public', 'product design taste', 'indie hacker pipeline', 'solopreneur reality'];
+    const query = queries[Math.floor(Math.random() * queries.length)];
+
+    const candidates = await client.searchTimeline(query);
+    const filtered = candidates.filter(c => (c.likeCount || 0) > 2); // Lower threshold slightly for Threads
+
+    let engaged = 0;
+    for (const candidate of filtered) {
+      if (engaged >= maxEngagements) break;
+
+      try {
+        // Evaluate for Threads (only skip or reply)
+        const systemPrompt = await this.promptCatalog.compose(['persona.system.md', 'engagement.system.md']);
+        const response = await this.provider.complete(
+          `${systemPrompt}\n\n## Target to Evaluate\n"${candidate.text.slice(0, 500)}"\n\nRespond with exactly ONE word: reply, or skip. (Threads does not support like or quote currently).`
+        );
+        const decision = response.trim().toLowerCase().replace(/[^a-z]/g, '');
+        
+        if (decision !== 'reply') continue;
+        if (this.currentCommentAllowance <= 0) continue;
+        if (this.learning.hasEngagedWithTarget('reply', candidate.id)) continue;
+
+        const text = await this.generateText(candidate.text, 'reply');
+        if (!text) continue;
+        securityGuard.assertSafeForPublishing(text);
+
+        await client.reply(text, candidate.id, myUserId);
+        this.learning.recordEngagementAction('reply', candidate.id, candidate.authorId || 'unknown', 'threads', true);
+        this.currentCommentAllowance--;
+        engaged++;
+
+        records.push({
+          tweetId: candidate.id,
+          authorId: candidate.authorId || 'unknown',
+          action: 'reply',
+          generatedContent: text,
+          executedAt: new Date().toISOString(),
+          success: true
+        });
+      } catch (error: any) {
+        this.learning.recordEngagementAction('reply', candidate.id, candidate.authorId || 'unknown', 'threads', false);
+        logger.warn({ threadId: candidate.id, error: error.message }, 'Threads engagement action failed');
+      }
+    }
+    return records;
+  }
+
   private async getEngagementDecision(tweetText: string): Promise<EngagementAction> {
     try {
       const systemPrompt = await this.promptCatalog.compose(['persona.system.md', 'engagement.system.md']);
@@ -209,9 +322,10 @@ export class EngagementAgent {
       if (['repost', 'quote', 'reply', 'like', 'skip'].includes(cleaned)) {
         return cleaned as EngagementAction;
       }
-      return 'skip';
+      return 'like';
     } catch {
-      return 'skip';
+      // When model is down (529 etc), default to liking — safe, silent, and builds the algorithm footprint
+      return 'like';
     }
   }
 
@@ -286,6 +400,18 @@ export class EngagementAgent {
       }
     }
     
+    return { client: null };
+  }
+
+  private async createThreadsClient(): Promise<{ client: ThreadsApiClient | null, userId?: string }> {
+    const token = await this.tokenStore.getProviderToken('threads');
+    if (token && token.accessToken) {
+      return { client: new ThreadsApiClient(token.accessToken), userId: token.userId };
+    }
+    const envToken = getEnv('THREADS_ACCESS_TOKEN');
+    if (envToken) {
+      return { client: new ThreadsApiClient(envToken), userId: 'me' };
+    }
     return { client: null };
   }
 }

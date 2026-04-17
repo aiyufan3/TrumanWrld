@@ -60,6 +60,21 @@ export class HermesOrchestrator {
       const signal = await this.discovery.discoverSignal();
       signalSource = signal.source;
       signalContent = signal.content;
+
+      // Dedup: if we already published something with this exact headline in the last 24h, skip it
+      if (this.learning.hasRecentlyPublished(signalContent, 24)) {
+        logger.info({ source: signalSource }, 'Signal was already published recently, requesting fresh signal');
+        // Force a different signal from the curated bank
+        const freshSignal = await this.discovery.discoverSignal();
+        if (this.learning.hasRecentlyPublished(freshSignal.content, 24)) {
+          logger.warn('All available signals appear recently published. Skipping harness this cycle.');
+          harnessStatus = 'skipped';
+        } else {
+          signalSource = freshSignal.source;
+          signalContent = freshSignal.content;
+        }
+      }
+
       logger.info(
         { source: signalSource, contentLength: signalContent.length },
         'Signal discovered'
@@ -68,25 +83,24 @@ export class HermesOrchestrator {
       // We append Memory Context to signalContent for simplistic robust prompt injection
       const injectedSignalContent = signalContent + memoryContext;
 
-      try {
-        const runner = createDefaultHarnessRunner();
-        const result = await runner.execute({
-          signalContent: injectedSignalContent,
-          approve: getEnv('HERMES_AUTO_APPROVE').trim().toLowerCase() !== 'false'
-        });
+      if (harnessStatus !== 'skipped') {
+        try {
+          const runner = createDefaultHarnessRunner();
+          const result = await runner.execute({
+            signalContent: injectedSignalContent,
+            approve: getEnv('HERMES_AUTO_APPROVE').trim().toLowerCase() !== 'false'
+          });
 
-        harnessRunId = result.runId;
-        harnessStatus = result.status;
-        logger.info({ runId: result.runId, status: result.status }, 'Harness pipeline completed');
-
-        // Note: HarnessRunner internally triggers LearningService.learnFromOutcomes if integrated,
-        // but we'll record the cycle directly here.
-      } catch (harnessError: any) {
-        harnessStatus = 'failed';
-        logger.error(
-          { error: harnessError.message },
-          'Harness pipeline failed in autonomous cycle'
-        );
+          harnessRunId = result.runId;
+          harnessStatus = result.status;
+          logger.info({ runId: result.runId, status: result.status }, 'Harness pipeline completed');
+        } catch (harnessError: any) {
+          harnessStatus = 'failed';
+          logger.error(
+            { error: harnessError.message },
+            'Harness pipeline failed in autonomous cycle'
+          );
+        }
       }
 
       try {
